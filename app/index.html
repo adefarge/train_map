@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Carte réseau TER</title>
+    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no'/>
+    <script src='https://api.tiles.mapbox.com/mapbox-gl-js/v1.2.1/mapbox-gl.js'></script>
+    <link href='https://api.tiles.mapbox.com/mapbox-gl-js/v1.2.1/mapbox-gl.css' rel='stylesheet'/>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<div id='map'></div>
+
+<script>
+    const map = new mapboxgl.Map({
+        container: 'map',
+        style: "https://tile.jawg.io/jawg-streets.json?access-token=10yBrWiMPNXLr9I8WJ04PuTgncs0OsbBgIMCqGHBw5Lzeqh7QnjoWw3nXO5yHyiH",
+        hash: true
+    });
+
+    const EMPTY_GEOJSON = {
+        type: "FeatureCollection",
+        features: []
+    };
+
+    let stops = undefined;
+
+    function init() {
+        fetch('data.json')
+            .then(response => response.json())
+            .then(json => stops = json)
+            .then(() => setupLayers())
+            .then(() => setupLogic());
+    }
+
+    function setupLogic() {
+        let selectedStopId = null;
+        let selectedDestId = null;
+        let clickTime = new Date().getTime();
+
+        map.on('click', 'stations-circle', e => {
+            if (selectedStopId !== null && selectedDestId === null) return;
+            const now = new Date().getTime();
+            if (now - clickTime < 500) return;
+            clickTime = now;
+
+            const feature = e.features[0];
+            selectedStopId = feature.properties.id;
+            selectedDestId = null;
+            const stop = stops[selectedStopId];
+
+            map.getSource("selected-station-selected-link").setData(EMPTY_GEOJSON);
+            map.getSource("selected-station").setData({
+                type: "FeatureCollection",
+                features: [feature]
+            });
+            const links = getLinks(stop.id, 3);
+
+            const data = {
+                type: "FeatureCollection",
+                features: Object.keys(links)
+                    .map(destId => {
+                        const dest = stops[destId];
+                        const link = links[destId];
+                        return {
+                            type: "Feature",
+                            geometry: {
+                                type: "Point",
+                                coordinates: [dest.lon, dest.lat]
+                            },
+                            properties: {
+                                id: destId,
+                                duration: link.duration,
+                                hops: link.hops,
+                                stops: link.stops
+                            }
+                        }
+                    })
+            };
+
+            map.getSource("selected-station-links").setData(data);
+
+            console.log(stop.id);
+        });
+
+        map.on('click', 'selected-station-links-circle', e => {
+            const now = new Date().getTime();
+            if (now - clickTime < 500) return;
+            clickTime = now;
+
+            const feature = e.features[0];
+            selectedDestId = feature.properties.id;
+            const dest = stops[selectedDestId];
+
+            const stop = stops[selectedStopId];
+            const linkStops = JSON.parse(feature.properties.stops);
+
+            const coordinates = [];
+            coordinates.push([stop.lon, stop.lat]);
+            for (let linkStopId of linkStops) {
+                const linkStop = stops[linkStopId];
+                coordinates.push([linkStop.lon, linkStop.lat])
+            }
+            coordinates.push([dest.lon, dest.lat]);
+
+            const data = {
+                type: "FeatureCollection",
+                features: [{
+                    type: "Feature",
+                    geometry: {
+                        type: "LineString",
+                        coordinates: coordinates
+                    },
+                    properties: {
+                        duration: feature.properties.duration
+                    }
+                }]
+            };
+
+            map.getSource("selected-station-selected-link").setData(data);
+        });
+    }
+
+    function setupLayers() {
+        map.addSource("stations", {
+            type: "geojson",
+            data: {
+                type: "FeatureCollection",
+                features: Object.keys(stops)
+                    .map((stopId) => {
+                        const stop = stops[stopId];
+                        return {
+                            type: "Feature",
+                            geometry: {
+                                type: "Point",
+                                coordinates: [stop.lon, stop.lat]
+                            },
+                            properties: {
+                                id: stopId,
+                                name: stop.name
+                            }
+                        }
+                    })
+            }
+        });
+
+        map.addSource("selected-station", {
+            type: "geojson",
+            data: EMPTY_GEOJSON
+        });
+
+        map.addSource("selected-station-links", {
+            type: "geojson",
+            data: EMPTY_GEOJSON
+        });
+
+        map.addSource("selected-station-selected-link", {
+            type: "geojson",
+            data: EMPTY_GEOJSON
+        });
+
+        map.addLayer({
+            id: "stations-circle",
+            type: "circle",
+            source: "stations",
+            paint: {
+                "circle-color": "blue",
+                "circle-radius": ['interpolate', ['linear'], ['zoom'], 5, 2, 10, 10]
+            }
+        });
+
+        map.addLayer({
+            id: "stations-name",
+            type: "symbol",
+            source: "stations",
+            minzoom: 10,
+            layout: {
+                "text-field": "{name}",
+                "text-offset": [0, 1],
+                "text-allow-overlap": true
+            }
+        });
+
+        map.addLayer({
+            id: "selected-station-selected-link",
+            type: "line",
+            source: "selected-station-selected-link",
+            paint: {
+                "line-color": "red",
+                "line-width": 10
+            }
+        });
+
+        map.addLayer({
+            id: "selected-station-links-circle",
+            type: "circle",
+            source: "selected-station-links",
+            paint: {
+                "circle-color": [
+                    "match",
+                    ["get", "hops"],
+                    1, "yellow",
+                    2, "orange",
+                    3, "red",
+                    "black"
+                ],
+                "circle-radius": ['interpolate', ['linear'], ['zoom'], 5, 3, 10, 15]
+            }
+        });
+
+        map.addLayer({
+            id: "selected-station-links-duration",
+            type: "symbol",
+            source: "selected-station-links",
+            layout: {
+                "text-field": "{duration}",
+                "text-offset": [0, 0]
+            }
+        });
+
+        map.addLayer({
+            id: "selected-station-circle",
+            type: "circle",
+            source: "selected-station",
+            paint: {
+                "circle-color": "green",
+                "circle-radius": ['interpolate', ['linear'], ['zoom'], 5, 3, 10, 15]
+            }
+        });
+    }
+
+    function getLinks(stopId, maxHops) {
+        let links = getLinksRecurse(stopId, maxHops);
+        delete links[stopId];
+        return links;
+    }
+
+    function getLinksRecurse(stopId, maxHops) {
+        const stop = stops[stopId];
+        const links = {};
+        for (let linkStopId of Object.keys(stop.links)) {
+            links[linkStopId] = {
+                duration: stop.links[linkStopId].duration,
+                stops: stop.links[linkStopId].stops,
+                hops: 1
+            }
+        }
+
+        if (maxHops === 1) {
+            return links;
+        }
+
+        for (let linkStopId of Object.keys(stop.links)) {
+            const link = stop.links[linkStopId];
+            const transfers = getLinksRecurse(linkStopId, maxHops - 1);
+
+            for (let transferDestId of Object.keys(transfers)) {
+                const transfer = transfers[transferDestId];
+                if (!links[transferDestId] ||
+                    links[transferDestId].hops >= transfer.hops + 1 &&
+                    links[transferDestId].duration > transfer.duration) {
+                    const stops = [];
+                    stops.push(...link.stops);
+                    stops.push(...transfer.stops);
+
+                    links[transferDestId] = {
+                        duration: link.duration + 15 + transfer.duration,
+                        stops: stops,
+                        hops: transfer.hops + 1
+                    };
+                }
+            }
+        }
+
+        return links;
+    }
+
+    map.on("load", () => {
+        init();
+    });
+</script>
+</body>
+</html>

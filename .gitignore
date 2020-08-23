@@ -1,0 +1,7 @@
+.gradle
+.idea
+!.idea/codeStyles/**
+data
+build
+out
+app/data.json
