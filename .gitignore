@@ -1,7 +1,6 @@
-.gradle
-.idea
-!.idea/codeStyles/**
-data
-build
-out
-app/data.json
+/.idea/workspace.xml
+/.idea/$CACHE_FILE$
+/data
+/app/data.json
+/app/node_modules
+/app/build
